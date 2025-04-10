@@ -204,12 +204,14 @@ struct ProfileSetupView: View {
                                 }
                             }
                             .frame(height: 56)
+                            .frame(maxWidth: .infinity)
                         }
                         .disabled(!isStepValid || authViewModel.isLoading || isUploading)
-                        .frame(maxWidth: .infinity)
                     } else {
-                        // Center aligned continue button for first step
-                        Spacer()
+                        // For first step, we maintain the same layout with an invisible spacer of fixed width
+                        Rectangle()
+                            .fill(Color.clear)
+                            .frame(width: 56, height: 56)
                         
                         // Next/Complete button
                         Button(action: {
@@ -237,11 +239,8 @@ struct ProfileSetupView: View {
                             }
                             .frame(height: 56)
                             .frame(maxWidth: .infinity)
-                            .frame(width: UIScreen.main.bounds.width - 48) // Adjust width with proper margins
                         }
                         .disabled(!isStepValid || authViewModel.isLoading || isUploading)
-                        
-                        Spacer()
                     }
                 }
                 .padding(.horizontal, 24)
@@ -1523,7 +1522,7 @@ struct EnhancedPreferenceButton: View {
         case .male:
             return "person.fill"
         case .female:
-            return "person.dress.fill"
+            return "figure.dress"
         case .nonBinary:
             return "person.3.fill"
         case .other:
