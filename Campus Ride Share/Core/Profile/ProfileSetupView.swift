@@ -583,86 +583,225 @@ struct AboutYouView: View {
     @Binding var occupation: String
     @Binding var university: String
     
+    @State private var activeField: Field? = nil
+    @State private var isGenderExpanded = false
+    @State private var showDatePicker = false
+    
+    enum Field: Hashable {
+        case bio, occupation, university
+    }
+    
     private let bioMaxLength = 150
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 32) {
+            // Bio section with more elegant styling
+            VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("BIO")
-                        .font(.system(size: 12))
-                        .foregroundColor(.gray)
+                    Text("About You")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.white)
                     
                     Spacer()
                     
                     Text("\(bio.count)/\(bioMaxLength)")
-                        .font(.system(size: 12))
+                        .font(.system(size: 13, weight: .regular))
                         .foregroundColor(bioLengthColor)
+                        .opacity(bio.isEmpty ? 0 : 1)
+                        .animation(.easeInOut(duration: 0.2), value: bio.isEmpty)
                 }
+                .padding(.horizontal, 4)
                 
-                TextEditor(text: Binding(
-                    get: { bio },
-                    set: { bio = String($0.prefix(bioMaxLength)) }
-                ))
-                .font(.system(size: 16))
-                .foregroundColor(.white)
-                .padding(12)
-                .frame(height: 120)
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-                        .background(Color.black)
-                )
-                
-                Text("Tell others about yourself")
-                    .font(.system(size: 12))
-                    .foregroundColor(.gray)
-            }
-            
-            VStack(alignment: .leading, spacing: 8) {
-                Text("GENDER")
-                    .font(.system(size: 12))
-                    .foregroundColor(.gray)
-                
-                Picker("", selection: $gender) {
-                    ForEach(Gender.allCases, id: \.self) { option in
-                        Text(option.rawValue).tag(option)
+                ZStack(alignment: .topLeading) {
+                    // Decorative elements
+                    HStack {
+                        VStack {
+                            Circle()
+                                .fill(Color.white.opacity(0.05))
+                                .frame(width: 8, height: 8)
+                            
+                            Spacer()
+                        }
+                        Spacer()
+                    }
+                    .padding(6)
+                    
+                    // Placeholder
+                    if bio.isEmpty {
+                        VStack {
+                            HStack {
+                                Text("Tell us about yourself...")
+                                    .font(.system(size: 16))
+                                    .foregroundColor(.gray.opacity(0.7))
+                                    .padding(.top, 12)
+                                    .padding(.leading, 16)
+                                Spacer()
+                            }
+                            Spacer()
+                        }
+                    }
+                    
+                    // Actual text editor
+                    TextEditor(text: Binding(
+                        get: { bio },
+                        set: { bio = String($0.prefix(bioMaxLength)) }
+                    ))
+                    .font(.system(size: 16))
+                    .foregroundColor(.white)
+                    .frame(minHeight: 150)
+                    .scrollContentBackground(.hidden)
+                    .background(Color.clear)
+                    .padding(12)
+                    .onTapGesture {
+                        activeField = .bio
                     }
                 }
-                .pickerStyle(.segmented)
-                .colorInvert()
-                .colorMultiply(Color.white)
+                .background(
+                    RoundedRectangle(cornerRadius: 20)
+                        .fill(
+                            LinearGradient(
+                                gradient: Gradient(colors: [Color.black.opacity(0.5), Color.black.opacity(0.3)]),
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .shadow(color: Color.black.opacity(0.2), radius: 8, x: 0, y: 4)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(
+                            activeField == .bio 
+                                ? LinearGradient(
+                                    gradient: Gradient(colors: [Color.white.opacity(0.8), Color.white.opacity(0.3)]),
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                  )
+                                : LinearGradient(
+                                    gradient: Gradient(colors: [Color.gray.opacity(0.5), Color.gray.opacity(0.2)]),
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                  ),
+                            lineWidth: activeField == .bio ? 1.5 : 1
+                        )
+                        .animation(.easeInOut(duration: 0.3), value: activeField == .bio)
+                )
+                .frame(height: 150)
+                // Subtle animation when tapped
+                .scaleEffect(activeField == .bio ? 1.01 : 1.0)
+                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: activeField == .bio)
             }
             
-            VStack(alignment: .leading, spacing: 8) {
-                Text("BIRTHDATE")
-                    .font(.system(size: 12))
-                    .foregroundColor(.gray)
+            // Gender selection with improved UI
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Gender Identity")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.white)
                 
-                DatePicker(
-                    "",
-                    selection: $birthdate,
-                    in: Calendar.current.date(byAdding: .year, value: -80, to: Date())!...Calendar.current.date(byAdding: .year, value: -18, to: Date())!,
-                    displayedComponents: .date
-                )
-                .datePickerStyle(.compact)
-                .labelsHidden()
-                .colorInvert()
-                .colorMultiply(.white)
-                .padding()
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-                        .background(Color.black)
-                )
+                // Updated gender selection layout with fixed width
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                    ForEach(Gender.allCases, id: \.self) { genderOption in
+                        EnhancedGenderButton(
+                            title: genderOption.rawValue,
+                            isSelected: gender == genderOption,
+                            action: {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                    gender = genderOption
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+            
+            // Birthdate with stylish picker
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Birthdate")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.white)
+                
+                Button(action: {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                        showDatePicker.toggle()
+                    }
+                }) {
+                    HStack {
+                        Text(formattedBirthdate)
+                            .font(.system(size: 16))
+                            .foregroundColor(.white)
+                        
+                        Spacer()
+                        
+                        Image(systemName: "calendar")
+                            .font(.system(size: 16))
+                            .foregroundColor(.white.opacity(0.7))
+                    }
+                    .padding()
+                    .background(
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(Color.black.opacity(0.3))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16)
+                                    .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                            )
+                    )
+                }
+                
+                if showDatePicker {
+                    DatePicker(
+                        "",
+                        selection: $birthdate,
+                        in: Calendar.current.date(byAdding: .year, value: -80, to: Date())!...Calendar.current.date(byAdding: .year, value: -18, to: Date())!,
+                        displayedComponents: .date
+                    )
+                    .datePickerStyle(.wheel)
+                    .labelsHidden()
+                    .colorInvert()
+                    .colorMultiply(.white)
+                    .padding()
+                    .background(
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(Color.black.opacity(0.3))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16)
+                                    .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                            )
+                    )
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
                 
                 Text("You must be at least 18 years old")
-                    .font(.system(size: 12))
-                    .foregroundColor(.gray)
+                    .font(.system(size: 13))
+                    .foregroundColor(.gray.opacity(0.7))
+                    .padding(.top, 4)
             }
             
-            SimpleInputField(text: $occupation, label: "OCCUPATION (OPTIONAL)")
-            SimpleInputField(text: $university, label: "UNIVERSITY (OPTIONAL)")
+            // Optional fields
+            VStack(alignment: .leading, spacing: 16) {
+                EnhancedInputField(
+                    text: $occupation,
+                    placeholder: "What do you do?",
+                    label: "Occupation",
+                    icon: "briefcase",
+                    isOptional: true,
+                    isActive: activeField == .occupation,
+                    onTap: { activeField = .occupation }
+                )
+                
+                EnhancedInputField(
+                    text: $university,
+                    placeholder: "Where do you study?",
+                    label: "University",
+                    icon: "book",
+                    isOptional: true,
+                    isActive: activeField == .university,
+                    onTap: { activeField = .university }
+                )
+            }
+        }
+        .onTapGesture {
+            // Dismiss active fields when tapping outside
+            activeField = nil
+            showDatePicker = false
         }
     }
     
@@ -672,28 +811,102 @@ struct AboutYouView: View {
         }
         return .gray
     }
+    
+    private var formattedBirthdate: String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        return formatter.string(from: birthdate)
+    }
 }
 
-struct SimpleInputField: View {
+struct EnhancedGenderButton: View {
+    let title: String
+    let isSelected: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            VStack {
+                Text(title)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(isSelected ? .black : .white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .frame(height: 46)
+            .frame(maxWidth: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(isSelected ? Color.white : Color.black.opacity(0.3))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(isSelected ? Color.white : Color.gray.opacity(0.3), lineWidth: 1)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(ScaleButtonStyle())
+    }
+}
+
+struct EnhancedInputField: View {
     @Binding var text: String
+    let placeholder: String
     let label: String
+    let icon: String
+    let isOptional: Bool
+    let isActive: Bool
+    let onTap: () -> Void
     
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(label)
-                .font(.system(size: 12))
-                .foregroundColor(.gray)
+            HStack {
+                Text(label)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.white)
+                
+                if isOptional {
+                    Text("(optional)")
+                        .font(.system(size: 12))
+                        .foregroundColor(.gray.opacity(0.7))
+                }
+            }
             
-            TextField("", text: $text)
-                .font(.system(size: 16))
-                .foregroundColor(.white)
-                .padding()
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-                        .background(Color.black)
-                )
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 16))
+                    .foregroundColor(isActive || !text.isEmpty ? .white.opacity(0.8) : .gray.opacity(0.5))
+                    .frame(width: 20)
+                
+                TextField(placeholder, text: $text)
+                    .font(.system(size: 16))
+                    .foregroundColor(.white)
+            }
+            .padding()
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color.black.opacity(0.3))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16)
+                            .stroke(
+                                isActive ? Color.white : Color.gray.opacity(0.3),
+                                lineWidth: isActive ? 1.5 : 1
+                            )
+                            .animation(.easeInOut(duration: 0.2), value: isActive)
+                    )
+            )
+            .onTapGesture {
+                onTap()
+            }
         }
+    }
+}
+
+struct ScaleButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .animation(.spring(response: 0.2, dampingFraction: 0.6), value: configuration.isPressed)
     }
 }
 
@@ -703,24 +916,26 @@ struct PreferencesView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
             Text("I'm interested in")
-                .font(.system(size: 16))
+                .font(.system(size: 20, weight: .semibold))
                 .foregroundColor(.white)
             
             Text("Select all that apply")
-                .font(.system(size: 14))
+                .font(.system(size: 16))
                 .foregroundColor(.gray)
-                .padding(.bottom, 8)
+                .padding(.bottom, 12)
             
-            VStack(spacing: 12) {
+            VStack(spacing: 16) {
                 ForEach(Gender.allCases, id: \.self) { gender in
-                    PreferenceToggleButton(
-                        title: gender.rawValue,
+                    EnhancedPreferenceButton(
+                        gender: gender,
                         isSelected: interestedIn.contains(gender),
                         action: {
-                            if interestedIn.contains(gender) {
-                                interestedIn.removeAll { $0 == gender }
-                            } else {
-                                interestedIn.append(gender)
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                if interestedIn.contains(gender) {
+                                    interestedIn.removeAll { $0 == gender }
+                                } else {
+                                    interestedIn.append(gender)
+                                }
                             }
                         }
                     )
@@ -730,10 +945,105 @@ struct PreferencesView: View {
     }
 }
 
+// New enhanced preference button with icons
+struct EnhancedPreferenceButton: View {
+    let gender: Gender
+    let isSelected: Bool
+    let action: () -> Void
+    
+    // Get icon based on gender
+    private var genderIcon: String {
+        switch gender {
+        case .male:
+            return "person.fill"
+        case .female:
+            return "person.dress.fill"
+        case .nonBinary:
+            return "person.3.fill"
+        case .other:
+            return "person.fill.questionmark"
+        }
+    }
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 16) {
+                // Icon with background circle
+                ZStack {
+                    Circle()
+                        .fill(isSelected ? Color.white.opacity(0.2) : Color.black.opacity(0.3))
+                        .frame(width: 40, height: 40)
+                    
+                    Image(systemName: genderIcon)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(isSelected ? .white : .gray)
+                }
+                
+                Text(gender.rawValue)
+                    .font(.system(size: 16, weight: isSelected ? .medium : .regular))
+                    .foregroundColor(.white)
+                
+                Spacer()
+                
+                // Animated checkmark
+                ZStack {
+                    Circle()
+                        .strokeBorder(isSelected ? Color.white : Color.gray.opacity(0.5), lineWidth: 1.5)
+                        .frame(width: 28, height: 28)
+                    
+                    if isSelected {
+                        Circle()
+                            .fill(Color.white)
+                            .frame(width: 18, height: 18)
+                            .transition(.scale.combined(with: .opacity))
+                    }
+                }
+            }
+            .padding(.vertical, 16)
+            .padding(.horizontal, 20)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(isSelected ? 
+                          LinearGradient(
+                            gradient: Gradient(colors: [Color.white.opacity(0.1), Color.white.opacity(0.15)]),
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                          ) : 
+                          LinearGradient(
+                            gradient: Gradient(colors: [Color.black.opacity(0.3), Color.black.opacity(0.3)]),
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                          ))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16)
+                            .strokeBorder(
+                                isSelected ? 
+                                    LinearGradient(
+                                        gradient: Gradient(colors: [Color.white.opacity(0.5), Color.white.opacity(0.2)]),
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    ) : 
+                                    LinearGradient(
+                                        gradient: Gradient(colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.3)]),
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    ),
+                                lineWidth: isSelected ? 1.5 : 1
+                            )
+                    )
+            )
+            .scaleEffect(isSelected ? 1.02 : 1.0)
+            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isSelected)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+
 struct InterestsView: View {
     @Binding var selectedInterests: [String]
     private let minInterests = 3
     
+    // Organize interests into categories for better visual grouping
     private let allInterests = [
         "Photography", "Music", "Cooking", "Travel", 
         "Reading", "Fitness", "Art", "Gaming", 
@@ -742,95 +1052,132 @@ struct InterestsView: View {
         "Pets", "Nature", "Food", "Coffee"
     ]
     
+    // Define consistent column layout
+    private let columns = [
+        GridItem(.flexible(), spacing: 12),
+        GridItem(.flexible(), spacing: 12),
+    ]
+    
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 28) {
+            // Header section
+            VStack(alignment: .leading, spacing: 6) {
                 Text("Select what you're into")
-                    .font(.system(size: 16))
+                    .font(.system(size: 20, weight: .semibold))
                     .foregroundColor(.white)
                 
                 Text("Choose at least \(minInterests) interests")
-                    .font(.system(size: 14))
+                    .font(.system(size: 16))
                     .foregroundColor(selectedInterests.count >= minInterests ? .gray : .orange)
             }
             
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 100))], spacing: 12) {
+            // Interest buttons in a clean grid layout
+            LazyVGrid(columns: columns, spacing: 14) {
                 ForEach(allInterests, id: \.self) { interest in
-                    InterestToggleButton(
+                    EnhancedInterestButton(
                         title: interest,
                         isSelected: selectedInterests.contains(interest),
                         action: {
-                            if selectedInterests.contains(interest) {
-                                selectedInterests.removeAll { $0 == interest }
-                            } else {
-                                selectedInterests.append(interest)
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                if selectedInterests.contains(interest) {
+                                    selectedInterests.removeAll { $0 == interest }
+                                } else {
+                                    selectedInterests.append(interest)
+                                }
                             }
                         }
                     )
                 }
             }
             
+            // Feedback message
             if selectedInterests.count >= minInterests {
-                Text("Great choices! You can select more if you'd like.")
-                    .font(.system(size: 14))
-                    .foregroundColor(.gray)
-                    .padding(.top, 16)
+                HStack {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                        .font(.system(size: 14))
+                    
+                    Text("Great choices! You can select more if you'd like.")
+                        .font(.system(size: 14))
+                        .foregroundColor(.gray)
+                }
+                .padding(.top, 8)
+                .transition(.opacity)
+                .animation(.easeIn, value: selectedInterests.count >= minInterests)
             }
         }
     }
 }
 
-struct PreferenceToggleButton: View {
+struct EnhancedInterestButton: View {
     let title: String
     let isSelected: Bool
     let action: () -> Void
     
+    // Get icon based on the interest
+    private var interestIcon: String {
+        switch title.lowercased() {
+        case "photography": return "camera.fill"
+        case "music": return "music.note"
+        case "cooking": return "flame.fill"
+        case "travel": return "airplane"
+        case "reading": return "book.fill"
+        case "fitness": return "figure.run"
+        case "art": return "paintbrush.fill"
+        case "gaming": return "gamecontroller.fill"
+        case "movies": return "film.fill"
+        case "hiking": return "mountain.2.fill"
+        case "dancing": return "music.quarternote.3"
+        case "yoga": return "figure.yoga"
+        case "fashion": return "tshirt.fill"
+        case "technology": return "desktopcomputer"
+        case "sports": return "sportscourt.fill"
+        case "writing": return "pencil"
+        case "pets": return "pawprint.fill"
+        case "nature": return "leaf.fill"
+        case "food": return "fork.knife"
+        case "coffee": return "cup.and.saucer.fill"
+        default: return "tag.fill"
+        }
+    }
+    
     var body: some View {
         Button(action: action) {
-            HStack {
+            HStack(spacing: 8) {
+                Image(systemName: interestIcon)
+                    .font(.system(size: 12))
+                    .foregroundColor(isSelected ? .black : .white.opacity(0.7))
+                
                 Text(title)
-                    .font(.system(size: 16))
-                    .foregroundColor(.white)
-                
-                Spacer()
-                
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .foregroundColor(isSelected ? .white : .gray)
+                    .font(.system(size: 14, weight: isSelected ? .medium : .regular))
+                    .foregroundColor(isSelected ? .black : .white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.9)
             }
-            .padding()
+            .frame(minWidth: 0, maxWidth: .infinity)
+            .frame(height: 44)
+            .padding(.horizontal, 8)
             .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(isSelected ? Color.white.opacity(0.1) : Color.black)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                Capsule()
+                    .fill(isSelected ? 
+                          Color.white :
+                          Color.black.opacity(0.3))
+            )
+            .overlay(
+                Capsule()
+                    .strokeBorder(
+                        isSelected ? 
+                            Color.white :
+                            Color.gray.opacity(0.3),
+                        lineWidth: isSelected ? 1.5 : 1
                     )
             )
+            .contentShape(Capsule())
+            .scaleEffect(isSelected ? 1.03 : 1.0)
+            .shadow(color: isSelected ? Color.white.opacity(0.2) : Color.clear, radius: 4)
         }
-    }
-}
-
-struct InterestToggleButton: View {
-    let title: String
-    let isSelected: Bool
-    let action: () -> Void
-    
-    var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 14))
-                .foregroundColor(isSelected ? .black : .white)
-                .padding(.vertical, 8)
-                .padding(.horizontal, 16)
-                .background(
-                    Capsule()
-                        .fill(isSelected ? Color.white : Color.black)
-                        .overlay(
-                            Capsule()
-                                .stroke(isSelected ? Color.white : Color.gray.opacity(0.3), lineWidth: 1)
-                        )
-                )
-        }
+        .buttonStyle(PlainButtonStyle())
+        .animation(.spring(response: 0.2, dampingFraction: 0.7), value: isSelected)
     }
 }
 
