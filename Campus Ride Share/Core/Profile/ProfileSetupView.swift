@@ -41,6 +41,28 @@ struct ProfileSetupView: View {
             VStack(spacing: 0) {
                 // Header
                 HStack {
+                    // Back to Login button
+                    Button(action: {
+                        // Navigate back to authentication
+                        withAnimation {
+                            coordinator.goToAuthScreen()
+                        }
+                    }) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(.gray)
+                            .frame(width: 28, height: 28)
+                            .background(
+                                Circle()
+                                    .fill(Color.black)
+                                    .overlay(
+                                        Circle()
+                                            .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                                    )
+                            )
+                    }
+                    .padding(.trailing, 8)
+                    
                     Text("Complete Your Profile")
                         .font(.system(size: 20, weight: .medium))
                         .foregroundColor(.white)
@@ -150,39 +172,71 @@ struct ProfileSetupView: View {
                                         .stroke(Color.gray.opacity(0.3), lineWidth: 1)
                                 )
                         }
-                    } else {
-                        // Empty spacer for alignment when no back button
-                        Color.clear.frame(width: 56, height: 56)
-                    }
-                    
-                    // Next/Complete button
-                    Button(action: {
-                        if currentStep < steps.count - 1 {
-                            withAnimation {
-                                currentStep += 1
-                            }
-                        } else {
-                            saveProfile()
-                        }
-                    }) {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 30)
-                                .fill(isStepValid ? Color.white : Color.gray.opacity(0.3))
-                            
-                            if authViewModel.isLoading || isUploading {
-                                ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: .black))
-                                    .scaleEffect(1.2)
+                        
+                        // Next/Complete button
+                        Button(action: {
+                            if currentStep < steps.count - 1 {
+                                withAnimation {
+                                    currentStep += 1
+                                }
                             } else {
-                                Text(currentStep < steps.count - 1 ? "Continue" : "Complete Profile")
-                                    .font(.system(size: 17, weight: .medium))
-                                    .foregroundColor(.black)
+                                saveProfile()
                             }
+                        }) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 30)
+                                    .fill(isStepValid ? Color.white : Color.gray.opacity(0.3))
+                                
+                                if authViewModel.isLoading || isUploading {
+                                    ProgressView()
+                                        .progressViewStyle(CircularProgressViewStyle(tint: .black))
+                                        .scaleEffect(1.2)
+                                } else {
+                                    Text(currentStep < steps.count - 1 ? "Continue" : "Complete Profile")
+                                        .font(.system(size: 17, weight: .medium))
+                                        .foregroundColor(.black)
+                                }
+                            }
+                            .frame(height: 56)
                         }
-                        .frame(height: 56)
+                        .disabled(!isStepValid || authViewModel.isLoading || isUploading)
+                        .frame(maxWidth: .infinity)
+                    } else {
+                        // Center aligned continue button for first step
+                        Spacer()
+                        
+                        // Next/Complete button
+                        Button(action: {
+                            if currentStep < steps.count - 1 {
+                                withAnimation {
+                                    currentStep += 1
+                                }
+                            } else {
+                                saveProfile()
+                            }
+                        }) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 30)
+                                    .fill(isStepValid ? Color.white : Color.gray.opacity(0.3))
+                                
+                                if authViewModel.isLoading || isUploading {
+                                    ProgressView()
+                                        .progressViewStyle(CircularProgressViewStyle(tint: .black))
+                                        .scaleEffect(1.2)
+                                } else {
+                                    Text(currentStep < steps.count - 1 ? "Continue" : "Complete Profile")
+                                        .font(.system(size: 17, weight: .medium))
+                                        .foregroundColor(.black)
+                                }
+                            }
+                            .frame(height: 56)
+                            .frame(maxWidth: .infinity)
+                            .frame(width: UIScreen.main.bounds.width - 48) // Adjust width with proper margins
+                        }
+                        .disabled(!isStepValid || authViewModel.isLoading || isUploading)
+                        
+                        Spacer()
                     }
-                    .disabled(!isStepValid || authViewModel.isLoading || isUploading)
-                    .frame(maxWidth: .infinity)
                 }
                 .padding(.horizontal, 24)
                 .padding(.bottom, 30)
@@ -278,35 +332,50 @@ struct ProfileSetupView: View {
     }
     
     private func uploadProfileImage(_ image: UIImage, userId: String, completion: @escaping (Result<String, Error>) -> Void) {
-        // Compress image for upload
-        guard let imageData = image.jpegData(compressionQuality: 0.7) else {
+        // Significantly reduce image size and quality before upload
+        let maxDimension: CGFloat = 800
+        let scaledImage = resizeImage(image, targetSize: CGSize(width: maxDimension, height: maxDimension))
+        
+        // Use much lower compression quality
+        guard let imageData = scaledImage.jpegData(compressionQuality: 0.5) else {
             completion(.failure(NSError(domain: "ProfileSetup", code: 0, userInfo: [NSLocalizedDescriptionKey: "Failed to compress image"])))
             return
         }
         
-        // Create a storage reference
-        let storageRef = Storage.storage().reference().child("profile_images/\(userId)/profile.jpg")
+        // Check if file size is reasonable (less than 1MB)
+        let fileSize = imageData.count / 1024 / 1024
+        print("Image size after compression: \(fileSize)MB")
         
-        // Create upload task
-        let uploadTask = storageRef.putData(imageData, metadata: nil) { _, error in
+        // Create a storage reference with a simpler path to avoid characters that might cause issues
+        let fileName = "profile_\(Date().timeIntervalSince1970).jpg"
+        let storageRef = Storage.storage().reference().child("profiles/\(userId)/\(fileName)")
+        
+        // Set metadata
+        let metadata = StorageMetadata()
+        metadata.contentType = "image/jpeg"
+        
+        // Upload with explicit completion
+        let uploadTask = storageRef.putData(imageData, metadata: metadata) { metadata, error in
             if let error = error {
+                print("Upload error: \(error.localizedDescription)")
                 completion(.failure(error))
                 return
             }
             
-            // Get download URL
-            storageRef.downloadURL { url, error in
-                if let error = error {
-                    completion(.failure(error))
-                    return
+            print("Upload complete, metadata: \(String(describing: metadata))")
+            
+            // Use a longer delay to ensure Firebase has fully processed the upload
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                self.getDownloadURL(storageRef: storageRef, attempts: 3) { result in
+                    switch result {
+                    case .success(let url):
+                        print("Successfully got download URL: \(url)")
+                        completion(.success(url))
+                    case .failure(let error):
+                        print("Failed to get download URL: \(error.localizedDescription)")
+                        completion(.failure(error))
+                    }
                 }
-                
-                guard let downloadURL = url else {
-                    completion(.failure(NSError(domain: "ProfileSetup", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to get download URL"])))
-                    return
-                }
-                
-                completion(.success(downloadURL.absoluteString))
             }
         }
         
@@ -318,6 +387,63 @@ struct ProfileSetupView: View {
                 self.uploadProgress = percentComplete
             }
         }
+    }
+    
+    // Helper function to get download URL with retry mechanism
+    private func getDownloadURL(storageRef: StorageReference, attempts: Int, completion: @escaping (Result<String, Error>) -> Void) {
+        guard attempts > 0 else {
+            completion(.failure(NSError(domain: "ProfileSetup", code: 2, userInfo: [NSLocalizedDescriptionKey: "Maximum retry attempts reached"])))
+            return
+        }
+        
+        storageRef.downloadURL { url, error in
+            if let error = error {
+                print("Download URL error (attempts left: \(attempts-1)): \(error.localizedDescription)")
+                
+                // Wait and retry
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    self.getDownloadURL(storageRef: storageRef, attempts: attempts - 1, completion: completion)
+                }
+                return
+            }
+            
+            guard let downloadURL = url else {
+                let error = NSError(domain: "ProfileSetup", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to get download URL"])
+                
+                // Wait and retry
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    self.getDownloadURL(storageRef: storageRef, attempts: attempts - 1, completion: completion)
+                }
+                return
+            }
+            
+            completion(.success(downloadURL.absoluteString))
+        }
+    }
+    
+    // Helper function to resize image
+    private func resizeImage(_ image: UIImage, targetSize: CGSize) -> UIImage {
+        let size = image.size
+        
+        let widthRatio  = targetSize.width  / size.width
+        let heightRatio = targetSize.height / size.height
+        
+        // Use the smaller ratio to ensure the image fits within the target size
+        let newSize: CGSize
+        if widthRatio > heightRatio {
+            newSize = CGSize(width: size.width * heightRatio, height: size.height * heightRatio)
+        } else {
+            newSize = CGSize(width: size.width * widthRatio, height: size.height * widthRatio)
+        }
+        
+        let rect = CGRect(x: 0, y: 0, width: newSize.width, height: newSize.height)
+        
+        UIGraphicsBeginImageContextWithOptions(newSize, false, 1.0)
+        image.draw(in: rect)
+        let newImage = UIGraphicsGetImageFromCurrentImageContext()
+        UIGraphicsEndImageContext()
+        
+        return newImage ?? image
     }
     
     private var successOverlay: some View {

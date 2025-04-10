@@ -79,6 +79,17 @@ class AppCoordinator: ObservableObject {
     func completeProfileSetup() {
         appState = .main
     }
+    
+    // Navigate back to authentication screen
+    func goToAuthScreen() {
+        // If the user is authenticated, sign them out
+        if authViewModel.isAuthenticated {
+            authViewModel.signOut()
+        }
+        
+        // Set app state to authentication
+        appState = .authentication
+    }
 }
 
 struct AppCoordinatorView: View {
@@ -186,6 +197,9 @@ struct MatchesView: View {
 
 struct UserProfileView: View {
     @EnvironmentObject private var authViewModel: AuthViewModel
+    @State private var showDeleteAccountConfirmation = false
+    @State private var showDeleteAccountSuccess = false
+    @State private var isDeleting = false
     
     var body: some View {
         ZStack {
@@ -213,6 +227,32 @@ struct UserProfileView: View {
                 
                 Spacer()
                 
+                // Error message
+                if let error = authViewModel.error {
+                    Text(error)
+                        .font(.system(size: 14))
+                        .foregroundColor(Color.red.opacity(0.8))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 16)
+                }
+                
+                // Delete account button
+                Button(action: {
+                    showDeleteAccountConfirmation = true
+                }) {
+                    Text("Delete Account")
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundColor(Color.red.opacity(0.8))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 56)
+                        .background(
+                            RoundedRectangle(cornerRadius: 30)
+                                .stroke(Color.red.opacity(0.8), lineWidth: 1)
+                        )
+                }
+                .padding(.horizontal, 24)
+                
                 // Sign out button
                 Button(action: {
                     authViewModel.signOut()
@@ -231,6 +271,150 @@ struct UserProfileView: View {
                 .padding(.bottom, 30)
             }
             .padding(.top, 20)
+            
+            // Confirmation dialog overlay
+            if showDeleteAccountConfirmation {
+                deleteAccountConfirmationOverlay
+            }
+            
+            // Success overlay
+            if showDeleteAccountSuccess {
+                deleteAccountSuccessOverlay
+            }
+            
+            // Loading overlay
+            if isDeleting {
+                ZStack {
+                    Color.black.opacity(0.7)
+                        .ignoresSafeArea()
+                    
+                    VStack(spacing: 16) {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            .scaleEffect(1.5)
+                        
+                        Text("Deleting account...")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                    }
+                }
+                .transition(.opacity)
+            }
+        }
+    }
+    
+    private var deleteAccountConfirmationOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.7)
+                .ignoresSafeArea()
+            
+            VStack(spacing: 24) {
+                Image(systemName: "exclamationmark.triangle")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 60, height: 60)
+                    .foregroundColor(.red)
+                
+                Text("Delete Account")
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundColor(.white)
+                
+                Text("This action cannot be undone. All your data will be permanently deleted.")
+                    .font(.system(size: 16))
+                    .foregroundColor(.white.opacity(0.8))
+                    .multilineTextAlignment(.center)
+                
+                HStack(spacing: 16) {
+                    // Cancel button
+                    Button(action: {
+                        showDeleteAccountConfirmation = false
+                    }) {
+                        Text("Cancel")
+                            .font(.system(size: 17, weight: .medium))
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 50)
+                            .background(
+                                RoundedRectangle(cornerRadius: 25)
+                                    .stroke(Color.white, lineWidth: 1)
+                            )
+                    }
+                    
+                    // Confirm delete button
+                    Button(action: {
+                        showDeleteAccountConfirmation = false
+                        isDeleting = true
+                        
+                        // Call delete account method
+                        authViewModel.deleteAccount { success in
+                            isDeleting = false
+                            if success {
+                                showDeleteAccountSuccess = true
+                            }
+                            // Error will be shown from the error binding
+                        }
+                    }) {
+                        Text("Delete")
+                            .font(.system(size: 17, weight: .medium))
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 50)
+                            .background(
+                                RoundedRectangle(cornerRadius: 25)
+                                    .fill(Color.red.opacity(0.8))
+                            )
+                    }
+                }
+            }
+            .padding(24)
+            .background(
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(Color.black)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20)
+                            .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                    )
+            )
+            .padding(32)
+            .transition(.opacity)
+        }
+    }
+    
+    private var deleteAccountSuccessOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.7)
+                .ignoresSafeArea()
+            
+            VStack(spacing: 24) {
+                Image(systemName: "checkmark.circle.fill")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 60, height: 60)
+                    .foregroundColor(.green)
+                
+                Text("Account Deleted")
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundColor(.white)
+                
+                Text("Your account has been successfully deleted. Thank you for using our app.")
+                    .font(.system(size: 16))
+                    .foregroundColor(.white.opacity(0.8))
+                    .multilineTextAlignment(.center)
+                
+                // This will be dismissed automatically through the app coordinator
+                // when the auth state changes
+            }
+            .padding(24)
+            .background(
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(Color.black)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20)
+                            .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                    )
+            )
+            .padding(32)
+            .transition(.opacity)
         }
     }
 }

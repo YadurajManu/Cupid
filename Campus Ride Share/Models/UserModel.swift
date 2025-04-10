@@ -287,4 +287,58 @@ class AuthViewModel: ObservableObject {
             }
         }
     }
+    
+    // MARK: - Delete Account
+    
+    func deleteAccount(completion: @escaping (Bool) -> Void) {
+        guard let currentUser = auth.currentUser else {
+            error = "No user is currently logged in"
+            completion(false)
+            return
+        }
+        
+        isLoading = true
+        error = nil
+        
+        // 1. Delete user data from Firestore
+        db.collection("users").document(currentUser.uid).delete { [weak self] error in
+            guard let self = self else { return }
+            
+            if let error = error {
+                DispatchQueue.main.async {
+                    self.isLoading = false
+                    self.error = "Failed to delete user data: \(error.localizedDescription)"
+                    completion(false)
+                }
+                return
+            }
+            
+            // 2. Delete user account from Firebase Auth
+            currentUser.delete { [weak self] error in
+                guard let self = self else { return }
+                
+                DispatchQueue.main.async {
+                    self.isLoading = false
+                    
+                    if let error = error {
+                        // Handle specific errors
+                        let authError = error as NSError
+                        if authError.code == AuthErrorCode.requiresRecentLogin.rawValue {
+                            self.error = "For security reasons, please sign out and sign in again before deleting your account."
+                        } else {
+                            self.error = "Failed to delete account: \(error.localizedDescription)"
+                        }
+                        completion(false)
+                        return
+                    }
+                    
+                    // Success
+                    self.currentUser = nil
+                    self.isAuthenticated = false
+                    self.onAuthStateChanged?()
+                    completion(true)
+                }
+            }
+        }
+    }
 } 
