@@ -18,6 +18,7 @@ struct User: Identifiable, Codable {
     var interestedIn: [Gender]
     var bio: String
     var photos: [String] // URLs to photos
+    var voiceIntroURL: String? // URL to voice introduction audio
     var location: Location?
     var interests: [String]
     var university: String?
@@ -39,6 +40,7 @@ struct User: Identifiable, Codable {
             interestedIn: [.other],
             bio: "",
             photos: [],
+            voiceIntroURL: nil,
             location: nil,
             interests: [],
             lastActive: Date(),

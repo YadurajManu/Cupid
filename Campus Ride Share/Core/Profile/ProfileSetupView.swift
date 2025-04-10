@@ -9,6 +9,8 @@ import SwiftUI
 import PhotosUI
 import FirebaseFirestore
 import FirebaseStorage
+import AVFoundation
+import UIKit
 
 struct ProfileSetupView: View {
     @EnvironmentObject private var authViewModel: AuthViewModel
@@ -25,6 +27,9 @@ struct ProfileSetupView: View {
     @State private var interests: [String] = []
     @State private var occupation = ""
     @State private var university = ""
+    @State private var voiceIntroRecording: URL? = nil
+    @State private var isRecording = false
+    @State private var recordingDuration: TimeInterval = 0
     @State private var showConfirmation = false
     @State private var isUploading = false
     @State private var uploadProgress: Double = 0
@@ -111,7 +116,8 @@ struct ProfileSetupView: View {
                                 gender: $gender,
                                 birthdate: $birthdate,
                                 occupation: $occupation,
-                                university: $university
+                                university: $university,
+                                voiceIntroRecording: $voiceIntroRecording
                             )
                         case 2:
                             // Preferences
@@ -307,26 +313,51 @@ struct ProfileSetupView: View {
         updatedUser.occupation = occupation.isEmpty ? nil : occupation
         updatedUser.university = university.isEmpty ? nil : university
         
+        let dispatchGroup = DispatchGroup()
+        
         // Upload photo to Firebase Storage
+        dispatchGroup.enter()
         uploadProfileImage(profileImage, userId: currentUser.id) { result in
             switch result {
             case .success(let photoUrl):
                 // Add the photo URL to the user's photos array
                 updatedUser.photos = [photoUrl]
-                
-                // Update user profile in Firestore
-                self.authViewModel.updateUserProfile(updatedUser: updatedUser)
-                
-                DispatchQueue.main.async {
-                    self.isUploading = false
-                    self.showConfirmation = true
-                }
+                dispatchGroup.leave()
                 
             case .failure(let error):
                 DispatchQueue.main.async {
                     self.isUploading = false
                     self.uploadError = "Failed to upload profile image: \(error.localizedDescription)"
                 }
+                dispatchGroup.leave()
+                return
+            }
+        }
+        
+        // Upload voice intro if available
+        if let voiceIntroRecording = voiceIntroRecording {
+            dispatchGroup.enter()
+            uploadVoiceIntro(voiceIntroRecording, userId: currentUser.id) { result in
+                switch result {
+                case .success(let voiceUrl):
+                    updatedUser.voiceIntroURL = voiceUrl
+                    dispatchGroup.leave()
+                    
+                case .failure(let error):
+                    print("Voice intro upload failed: \(error.localizedDescription)")
+                    // We continue even if voice upload fails
+                    dispatchGroup.leave()
+                }
+            }
+        }
+        
+        dispatchGroup.notify(queue: .main) {
+            // Update user profile in Firestore
+            self.authViewModel.updateUserProfile(updatedUser: updatedUser)
+            
+            DispatchQueue.main.async {
+                self.isUploading = false
+                self.showConfirmation = true
             }
         }
     }
@@ -382,9 +413,58 @@ struct ProfileSetupView: View {
         // Monitor upload progress
         uploadTask.observe(.progress) { snapshot in
             guard let progress = snapshot.progress else { return }
-            let percentComplete = Double(progress.completedUnitCount) / Double(progress.totalUnitCount)
             DispatchQueue.main.async {
-                self.uploadProgress = percentComplete
+                self.uploadProgress = Double(progress.completedUnitCount) / Double(progress.totalUnitCount)
+            }
+        }
+    }
+    
+    private func uploadVoiceIntro(_ audioURL: URL, userId: String, completion: @escaping (Result<String, Error>) -> Void) {
+        let storage = Storage.storage()
+        let storageRef = storage.reference()
+        
+        // Create a unique file name
+        let timestamp = Int(Date().timeIntervalSince1970)
+        let audioRef = storageRef.child("voice_intros/\(userId)/intro_\(timestamp).m4a")
+        
+        // Set metadata
+        let metadata = StorageMetadata()
+        metadata.contentType = "audio/m4a"
+        
+        // Upload the file
+        let uploadTask = audioRef.putFile(from: audioURL, metadata: metadata)
+        
+        // Monitor upload progress
+        uploadTask.observe(.progress) { snapshot in
+            guard let progress = snapshot.progress else { return }
+            DispatchQueue.main.async {
+                self.uploadProgress = Double(progress.completedUnitCount) / Double(progress.totalUnitCount)
+            }
+        }
+        
+        // Handle upload completion
+        uploadTask.observe(.success) { _ in
+            // Get download URL
+            audioRef.downloadURL { url, error in
+                if let error = error {
+                    completion(.failure(error))
+                    return
+                }
+                
+                guard let downloadURL = url else {
+                    completion(.failure(NSError(domain: "VoiceIntroError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to get download URL"])))
+                    return
+                }
+                
+                completion(.success(downloadURL.absoluteString))
+            }
+        }
+        
+        uploadTask.observe(.failure) { snapshot in
+            if let error = snapshot.error {
+                completion(.failure(error))
+            } else {
+                completion(.failure(NSError(domain: "VoiceIntroError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Unknown error"])))
             }
         }
     }
@@ -544,7 +624,7 @@ struct PhotoSelectionView: View {
                         .stroke(Color.white, lineWidth: 1)
                 )
             }
-            .onChange(of: selectedItem) { newItem in
+            .onChange(of: selectedItem) { oldValue, newItem in
                 Task {
                     if let data = try? await newItem?.loadTransferable(type: Data.self),
                        let image = UIImage(data: data) {
@@ -582,6 +662,18 @@ struct AboutYouView: View {
     @Binding var birthdate: Date
     @Binding var occupation: String
     @Binding var university: String
+    @Binding var voiceIntroRecording: URL?
+    @State private var isRecording = false
+    @State private var isPlaying = false
+    @State private var recordingDuration: TimeInterval = 0
+    @State private var playbackProgress: TimeInterval = 0
+    @State private var audioDuration: TimeInterval = 0
+    @State private var timer: Timer?
+    @State private var audioPlayer: AVAudioPlayer?
+    @State private var audioRecorder: AVAudioRecorder?
+    @State private var playerObserver: AVPlayerObserver?
+    @State private var audioLevels: [CGFloat] = Array(repeating: 0.05, count: 30)
+    @State private var playbackTimer: Timer?
     
     @State private var activeField: Field? = nil
     @State private var isGenderExpanded = false
@@ -592,6 +684,7 @@ struct AboutYouView: View {
     }
     
     private let bioMaxLength = 150
+    private let maxRecordingDuration: TimeInterval = 30 // 30 seconds max recording
     
     var body: some View {
         VStack(alignment: .leading, spacing: 32) {
@@ -689,6 +782,262 @@ struct AboutYouView: View {
                 // Subtle animation when tapped
                 .scaleEffect(activeField == .bio ? 1.01 : 1.0)
                 .animation(.spring(response: 0.3, dampingFraction: 0.7), value: activeField == .bio)
+            }
+            
+            // Voice Intro section with improved visualization
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Voice Introduction")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.white)
+                
+                ZStack {
+                    // Background
+                    RoundedRectangle(cornerRadius: 20)
+                        .fill(
+                            LinearGradient(
+                                gradient: Gradient(colors: [Color.black.opacity(0.5), Color.black.opacity(0.3)]),
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .shadow(color: Color.black.opacity(0.2), radius: 8, x: 0, y: 4)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 20)
+                                .stroke(
+                                    LinearGradient(
+                                        gradient: Gradient(colors: [Color.gray.opacity(0.5), Color.gray.opacity(0.2)]),
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    ),
+                                    lineWidth: 1
+                                )
+                        )
+                    
+                    VStack(spacing: 20) {
+                        // Audio waveform visualization
+                        ZStack {
+                            // Main circle background
+                            Circle()
+                                .fill(
+                                    LinearGradient(
+                                        gradient: Gradient(colors: [
+                                            isRecording ? Color.white.opacity(0.2) : Color.white.opacity(0.1),
+                                            isRecording ? Color.white.opacity(0.1) : Color.white.opacity(0.05)
+                                        ]),
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                                .frame(width: 90, height: 90)
+                            
+                            // Waveform visualization
+                            HStack(spacing: 2) {
+                                ForEach(0..<audioLevels.count, id: \.self) { index in
+                                    RoundedRectangle(cornerRadius: 1.5)
+                                        .fill(
+                                            isRecording 
+                                                ? Color.white.opacity(0.8)
+                                                : (isPlaying 
+                                                   ? Color.white.opacity(0.8) 
+                                                   : Color.white.opacity(0.3))
+                                        )
+                                        .frame(width: 3, height: audioLevels[index] * 50)
+                                        .animation(.spring(response: 0.2, dampingFraction: 0.5), value: audioLevels[index])
+                                }
+                            }
+                            .frame(width: 140)
+                            .opacity(isRecording || isPlaying ? 1 : 0.6)
+                            
+                            // Main action button
+                            Button(action: {
+                                if isRecording {
+                                    stopRecording()
+                                    triggerHapticFeedback(.medium)
+                                } else if let _ = voiceIntroRecording {
+                                    togglePlayback()
+                                    triggerHapticFeedback(.light)
+                                } else {
+                                    startRecording()
+                                    triggerHapticFeedback(.medium)
+                                }
+                            }) {
+                                Circle()
+                                    .fill(
+                                        isRecording ? Color.white.opacity(0.5) : Color.white.opacity(0.1)
+                                    )
+                                    .frame(width: 60, height: 60)
+                                    .overlay(
+                                        Image(systemName: 
+                                              isRecording ? "stop.fill" :
+                                                (voiceIntroRecording != nil ? 
+                                                 (isPlaying ? "pause.fill" : "play.fill") : 
+                                                    "mic.fill")
+                                        )
+                                        .font(.system(size: 24, weight: .medium))
+                                        .foregroundColor(.white)
+                                    )
+                                    .shadow(color: isRecording ? Color.white.opacity(0.3) : Color.clear, radius: 8)
+                            }
+                            .buttonStyle(ScaleButtonStyle())
+                        }
+                        
+                        // Status and timing
+                        VStack(spacing: 8) {
+                            if isRecording {
+                                // Recording time with animated indicator
+                                HStack(spacing: 10) {
+                                    Circle()
+                                        .fill(Color.white.opacity(0.8))
+                                        .frame(width: 8, height: 8)
+                                        .opacity(isRecording ? 1 : 0)
+                                        .animation(Animation.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: isRecording)
+                                    
+                                    Text(formattedDuration)
+                                        .font(.system(size: 18, weight: .medium, design: .monospaced))
+                                        .foregroundColor(.white)
+                                }
+                            } else if voiceIntroRecording != nil {
+                                if isPlaying {
+                                    // Playback progress
+                                    VStack(spacing: 6) {
+                                        Text("\(formattedTimeInterval(playbackProgress)) / \(formattedTimeInterval(audioDuration))")
+                                            .font(.system(size: 14, weight: .medium, design: .monospaced))
+                                            .foregroundColor(.white)
+                                        
+                                        // Progress bar
+                                        GeometryReader { geometry in
+                                            ZStack(alignment: .leading) {
+                                                RoundedRectangle(cornerRadius: 2)
+                                                    .fill(Color.gray.opacity(0.3))
+                                                    .frame(height: 4)
+                                                
+                                                RoundedRectangle(cornerRadius: 2)
+                                                    .fill(Color.white.opacity(0.8))
+                                                    .frame(width: max(0, min(geometry.size.width * CGFloat(playbackProgress / max(audioDuration, 1)), geometry.size.width)), height: 4)
+                                            }
+                                        }
+                                        .frame(height: 4)
+                                    }
+                                } else {
+                                    Text("Voice intro recorded (\(formattedTimeInterval(audioDuration)))")
+                                        .font(.system(size: 15))
+                                        .foregroundColor(.white)
+                                }
+                            } else {
+                                Text("Add a voice intro to stand out")
+                                    .font(.system(size: 15))
+                                    .foregroundColor(.gray)
+                            }
+                        }
+                        .frame(height: 40)
+                        
+                        // Control buttons with improved layout
+                        HStack(spacing: 20) {
+                            if voiceIntroRecording != nil && !isRecording {
+                                // Delete button with confirmation
+                                Button(action: {
+                                    triggerHapticFeedback(.medium)
+                                    deleteRecording()
+                                }) {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "trash")
+                                            .font(.system(size: 14))
+                                        Text("Delete")
+                                            .font(.system(size: 14, weight: .medium))
+                                    }
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 8)
+                                    .background(
+                                        Capsule()
+                                            .fill(Color.black.opacity(0.6))
+                                            .overlay(
+                                                Capsule()
+                                                    .stroke(Color.white.opacity(0.4), lineWidth: 1)
+                                            )
+                                    )
+                                }
+                                
+                                // Re-record button
+                                Button(action: {
+                                    deleteRecording()
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                        startRecording()
+                                    }
+                                    triggerHapticFeedback(.light)
+                                }) {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "arrow.triangle.2.circlepath")
+                                            .font(.system(size: 14))
+                                        Text("Re-record")
+                                            .font(.system(size: 14, weight: .medium))
+                                    }
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 8)
+                                    .background(
+                                        Capsule()
+                                            .fill(Color.white.opacity(0.2))
+                                            .overlay(
+                                                Capsule()
+                                                    .stroke(Color.white.opacity(0.4), lineWidth: 1)
+                                            )
+                                    )
+                                }
+                            } else if isRecording {
+                                Spacer()
+                                
+                                // Recording time remaining indicator
+                                Text("\(Int(maxRecordingDuration - recordingDuration))s remaining")
+                                    .font(.system(size: 14))
+                                    .foregroundColor(.gray)
+                                
+                                Spacer()
+                            } else {
+                                Spacer()
+                                
+                                // Record button
+                                Button(action: {
+                                    startRecording()
+                                    triggerHapticFeedback(.medium)
+                                }) {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "mic.fill")
+                                            .font(.system(size: 14))
+                                        Text("Start Recording")
+                                            .font(.system(size: 14, weight: .medium))
+                                    }
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 20)
+                                    .padding(.vertical, 10)
+                                    .background(
+                                        Capsule()
+                                            .fill(
+                                                LinearGradient(
+                                                    gradient: Gradient(colors: [Color.white.opacity(0.3), Color.white.opacity(0.2)]),
+                                                    startPoint: .topLeading,
+                                                    endPoint: .bottomTrailing
+                                                )
+                                            )
+                                    )
+                                }
+                                
+                                Spacer()
+                            }
+                        }
+                        
+                        // Help text
+                        if !isRecording && voiceIntroRecording == nil {
+                            Text("Add a short voice introduction (30s max)")
+                                .font(.system(size: 12))
+                                .foregroundColor(.gray)
+                                .multilineTextAlignment(.center)
+                                .padding(.top, 4)
+                        }
+                    }
+                    .padding(20)
+                }
+                .frame(height: 270)
             }
             
             // Gender selection with improved UI
@@ -798,6 +1147,9 @@ struct AboutYouView: View {
                 )
             }
         }
+        .onAppear {
+            setupAudioSession()
+        }
         .onTapGesture {
             // Dismiss active fields when tapping outside
             activeField = nil
@@ -806,16 +1158,230 @@ struct AboutYouView: View {
     }
     
     private var bioLengthColor: Color {
-        if bio.count > bioMaxLength - 20 {
-            return bio.count >= bioMaxLength ? .red : .orange
+        let ratio = Double(bio.count) / Double(bioMaxLength)
+        if ratio < 0.7 {
+            return .gray
+        } else if ratio < 0.9 {
+            return .yellow
+        } else {
+            return .red
         }
-        return .gray
     }
     
-    private var formattedBirthdate: String {
+    var formattedBirthdate: String {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         return formatter.string(from: birthdate)
+    }
+    
+    var formattedDuration: String {
+        let minutes = Int(recordingDuration) / 60
+        let seconds = Int(recordingDuration) % 60
+        return String(format: "%02d:%02d", minutes, seconds)
+    }
+    
+    // MARK: - Audio Recording Functions
+    
+    private func setupAudioSession() {
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
+            try session.setActive(true)
+        } catch {
+            print("Failed to set up audio session: \(error.localizedDescription)")
+        }
+    }
+    
+    private func startRecording() {
+        // Create a temporary file URL
+        let audioFilename = getDocumentsDirectory().appendingPathComponent("voice_intro.m4a")
+        
+        // Recording settings
+        let settings = [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+            AVSampleRateKey: 44100,
+            AVNumberOfChannelsKey: 2,
+            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+        ]
+        
+        do {
+            // Create and start the recorder
+            audioRecorder = try AVAudioRecorder(url: audioFilename, settings: settings)
+            audioRecorder?.isMeteringEnabled = true
+            audioRecorder?.record()
+            
+            // Start the timer to track recording duration and update audio levels
+            recordingDuration = 0
+            timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { timer in
+                recordingDuration += 0.1
+                
+                // Update audio visualization
+                self.updateAudioLevels()
+                
+                // Stop recording when max duration is reached
+                if recordingDuration >= maxRecordingDuration {
+                    stopRecording()
+                }
+            }
+            
+            isRecording = true
+        } catch {
+            print("Could not start recording: \(error.localizedDescription)")
+        }
+    }
+    
+    private func stopRecording() {
+        audioRecorder?.stop()
+        timer?.invalidate()
+        timer = nil
+        isRecording = false
+        
+        // Reset audio levels to idle state
+        for i in 0..<audioLevels.count {
+            audioLevels[i] = 0.05 + CGFloat.random(in: 0...0.1)
+        }
+        
+        // Save the recording URL
+        if let url = audioRecorder?.url, FileManager.default.fileExists(atPath: url.path) {
+            voiceIntroRecording = url
+            
+            // Get the duration of the recorded audio
+            do {
+                let player = try AVAudioPlayer(contentsOf: url)
+                audioDuration = player.duration
+            } catch {
+                print("Could not determine audio duration: \(error)")
+            }
+        }
+    }
+    
+    private func togglePlayback() {
+        guard let url = voiceIntroRecording else { return }
+        
+        if isPlaying {
+            // Stop playback
+            audioPlayer?.stop()
+            isPlaying = false
+            playbackTimer?.invalidate()
+            playbackTimer = nil
+        } else {
+            // Start playback
+            do {
+                audioPlayer = try AVAudioPlayer(contentsOf: url)
+                audioDuration = audioPlayer?.duration ?? 0
+                playerObserver = AVPlayerObserver(onComplete: {
+                    self.isPlaying = false
+                    self.playbackProgress = 0
+                    self.playbackTimer?.invalidate()
+                    self.playbackTimer = nil
+                    self.regenerateIdleWaveform()
+                })
+                audioPlayer?.delegate = playerObserver
+                audioPlayer?.play()
+                isPlaying = true
+                
+                // Start tracking playback progress
+                playbackProgress = 0
+                playbackTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
+                    if let player = self.audioPlayer, player.isPlaying {
+                        self.playbackProgress = player.currentTime
+                        self.updatePlaybackWaveform()
+                    }
+                }
+                
+                // Create initial playback waveform
+                createRandomWaveform(animated: true)
+            } catch {
+                print("Could not play recording: \(error.localizedDescription)")
+            }
+        }
+    }
+    
+    private func deleteRecording() {
+        if let url = voiceIntroRecording, FileManager.default.fileExists(atPath: url.path) {
+            do {
+                try FileManager.default.removeItem(at: url)
+                voiceIntroRecording = nil
+            } catch {
+                print("Could not delete recording: \(error.localizedDescription)")
+            }
+        }
+    }
+    
+    private func getDocumentsDirectory() -> URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    }
+    
+    // Function for formatted time intervals
+    private func formattedTimeInterval(_ timeInterval: TimeInterval) -> String {
+        let minutes = Int(timeInterval) / 60
+        let seconds = Int(timeInterval) % 60
+        return String(format: "%d:%02d", minutes, seconds)
+    }
+    
+    // Update audio visualization levels during recording
+    private func updateAudioLevels() {
+        guard let recorder = audioRecorder, recorder.isRecording else { return }
+        
+        recorder.updateMeters()
+        
+        // Shift values to the left
+        audioLevels.removeFirst()
+        
+        // Add new value at the end
+        let normalizedValue = max(0.05, min(1.0, CGFloat(1.0 + recorder.averagePower(forChannel: 0) / 50)))
+        audioLevels.append(normalizedValue)
+    }
+    
+    // Generate random waveform for playback visualization
+    private func createRandomWaveform(animated: Bool = false) {
+        for i in 0..<audioLevels.count {
+            DispatchQueue.main.asyncAfter(deadline: .now() + (animated ? Double(i) * 0.02 : 0)) {
+                self.audioLevels[i] = CGFloat.random(in: 0.2...0.8)
+            }
+        }
+    }
+    
+    // Update waveform during playback
+    private func updatePlaybackWaveform() {
+        // Create a bouncing effect for playback
+        if isPlaying {
+            for i in 0..<audioLevels.count {
+                if i % 3 == Int(playbackProgress * 10) % 3 {
+                    audioLevels[i] = CGFloat.random(in: 0.6...0.9)
+                } else {
+                    audioLevels[i] = CGFloat.random(in: 0.2...0.5)
+                }
+            }
+        }
+    }
+    
+    // Generate idle waveform when not playing
+    private func regenerateIdleWaveform() {
+        for i in 0..<audioLevels.count {
+            audioLevels[i] = 0.05 + CGFloat.random(in: 0...0.1)
+        }
+    }
+    
+    // Add haptic feedback
+    private func triggerHapticFeedback(_ style: UIImpactFeedbackGenerator.FeedbackStyle) {
+        let generator = UIImpactFeedbackGenerator(style: style)
+        generator.prepare()
+        generator.impactOccurred()
+    }
+}
+
+// Helper class for audio playback completion
+class AVPlayerObserver: NSObject, AVAudioPlayerDelegate {
+    private let onComplete: () -> Void
+    
+    init(onComplete: @escaping () -> Void) {
+        self.onComplete = onComplete
+        super.init()
+    }
+    
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        onComplete()
     }
 }
 
@@ -1094,7 +1660,7 @@ struct InterestsView: View {
             if selectedInterests.count >= minInterests {
                 HStack {
                     Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.green)
+                        .foregroundColor(.white)
                         .font(.system(size: 14))
                     
                     Text("Great choices! You can select more if you'd like.")
