@@ -7,6 +7,10 @@
 
 import SwiftUI
 import FirebaseAuth
+import FirebaseStorage
+import FirebaseFirestore
+import PhotosUI
+import UIKit
 
 enum AppState {
     case onboarding
@@ -89,6 +93,69 @@ class AppCoordinator: ObservableObject {
         
         // Set app state to authentication
         appState = .authentication
+    }
+    
+    // Check if user is active (within last 15 minutes)
+    private func isUserActive(_ lastActive: Date) -> Bool {
+        return Calendar.current.date(byAdding: .minute, value: -15, to: Date())! < lastActive
+    }
+    
+    // Format last active time
+    private func formatLastActive(_ lastActive: Date) -> String {
+        let now = Date()
+        let calendar = Calendar.current
+        
+        // If active today
+        if calendar.isDateInToday(lastActive) {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "h:mm a"
+            return "Active today at \(formatter.string(from: lastActive))"
+        }
+        
+        // If active yesterday
+        if calendar.isDateInYesterday(lastActive) {
+            return "Active yesterday"
+        }
+        
+        // If active within the last week
+        if let weekAgo = calendar.date(byAdding: .day, value: -7, to: now), lastActive > weekAgo {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "EEEE" // Day name
+            return "Active on \(formatter.string(from: lastActive))"
+        }
+        
+        // If older than a week
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return "Active on \(formatter.string(from: lastActive))"
+    }
+    
+    // Share profile function
+    private func shareProfile(user: User) {
+        // Create a shareable string with the user's profile details
+        let profileText = """
+        Check out \(user.name)'s profile on Campus Ride Share!
+        
+        Age: \(user.age)
+        Bio: \(user.bio)
+        Interests: \(user.interests.joined(separator: ", "))
+        """
+        
+        // Create an activity item that includes the profile text
+        let items: [Any] = [profileText]
+        
+        // Present the share sheet
+        let activityViewController = UIActivityViewController(
+            activityItems: items,
+            applicationActivities: nil
+        )
+        
+        // Present the view controller
+        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+           let rootViewController = windowScene.windows.first?.rootViewController {
+            rootViewController.present(activityViewController, animated: true, completion: nil)
+        }
     }
 }
 
@@ -197,11 +264,80 @@ struct MatchesView: View {
 
 struct UserProfileView: View {
     @EnvironmentObject private var authViewModel: AuthViewModel
+    @EnvironmentObject private var coordinator: AppCoordinator
     @State private var showDeleteAccountConfirmation = false
     @State private var showDeleteAccountSuccess = false
     @State private var isDeleting = false
     @State private var selectedPhotoIndex = 0
     @State private var isEditMode = false
+    @State private var showPhotoActionSheet = false
+    @State private var showPhotoPickerSheet = false
+    @State private var selectedItem: PhotosPickerItem?
+    
+    // MARK: - Helper Methods for User Activity
+    
+    // Check if user is active (within last 15 minutes)
+    private func isUserActive(_ lastActive: Date) -> Bool {
+        return Calendar.current.date(byAdding: .minute, value: -15, to: Date())! < lastActive
+    }
+    
+    // Format last active time
+    private func formatLastActive(_ lastActive: Date) -> String {
+        let now = Date()
+        let calendar = Calendar.current
+        
+        // If active today
+        if calendar.isDateInToday(lastActive) {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "h:mm a"
+            return "Active today at \(formatter.string(from: lastActive))"
+        }
+        
+        // If active yesterday
+        if calendar.isDateInYesterday(lastActive) {
+            return "Active yesterday"
+        }
+        
+        // If active within the last week
+        if let weekAgo = calendar.date(byAdding: .day, value: -7, to: now), lastActive > weekAgo {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "EEEE" // Day name
+            return "Active on \(formatter.string(from: lastActive))"
+        }
+        
+        // If older than a week
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return "Active on \(formatter.string(from: lastActive))"
+    }
+    
+    // Share profile function
+    private func shareProfile(user: User) {
+        // Create a shareable string with the user's profile details
+        let profileText = """
+        Check out \(user.name)'s profile on Campus Ride Share!
+        
+        Age: \(user.age)
+        Bio: \(user.bio)
+        Interests: \(user.interests.joined(separator: ", "))
+        """
+        
+        // Create an activity item that includes the profile text
+        let items: [Any] = [profileText]
+        
+        // Present the share sheet
+        let activityViewController = UIActivityViewController(
+            activityItems: items,
+            applicationActivities: nil
+        )
+        
+        // Present the view controller
+        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+           let rootViewController = windowScene.windows.first?.rootViewController {
+            rootViewController.present(activityViewController, animated: true, completion: nil)
+        }
+    }
     
     var body: some View {
         ZStack {
@@ -211,7 +347,9 @@ struct UserProfileView: View {
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 0) {
                         // Profile Photo Gallery
-                        PhotoGalleryView(photos: user.photos, selectedIndex: $selectedPhotoIndex)
+                        PhotoGalleryView(photos: user.photos, selectedIndex: $selectedPhotoIndex, onAddPhotoTapped: {
+                            showPhotoActionSheet = true
+                        })
                             .frame(height: 450)
                         
                         // User Info Card - Floating above the gallery
@@ -227,6 +365,27 @@ struct UserProfileView: View {
                                         .font(.system(size: 26, weight: .medium))
                                         .foregroundColor(.white.opacity(0.9))
                                         .padding(.leading, 4)
+                                    
+                                    // Active status indicator
+                                    if isUserActive(user.lastActive) {
+                                        HStack(spacing: 4) {
+                                            Circle()
+                                                .fill(Color.green)
+                                                .frame(width: 8, height: 8)
+                                            
+                                            Text("Active now")
+                                                .font(.system(size: 12))
+                                                .foregroundColor(.green)
+                                        }
+                                        .padding(.leading, 8)
+                                    } else {
+                                        HStack(spacing: 4) {
+                                            Text(formatLastActive(user.lastActive))
+                                                .font(.system(size: 12))
+                                                .foregroundColor(.gray)
+                                        }
+                                        .padding(.leading, 8)
+                                    }
                                     
                                     Spacer()
                                     
@@ -298,6 +457,50 @@ struct UserProfileView: View {
                                 .padding(.top, 16)
                             }
                             
+                            // Stats Section
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("Profile Stats")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .foregroundColor(.white.opacity(0.9))
+                                
+                                HStack(spacing: 0) {
+                                    // Profile Views
+                                    StatItemView(
+                                        icon: "eye.fill",
+                                        value: "182",
+                                        label: "Profile Views"
+                                    )
+                                    
+                                    Divider()
+                                        .background(Color.white.opacity(0.2))
+                                        .frame(height: 40)
+                                    
+                                    // Matches
+                                    StatItemView(
+                                        icon: "heart.fill",
+                                        value: "\(Int.random(in: 5...30))",
+                                        label: "Matches"
+                                    )
+                                    
+                                    Divider()
+                                        .background(Color.white.opacity(0.2))
+                                        .frame(height: 40)
+                                    
+                                    // Profile Completion
+                                    StatItemView(
+                                        icon: "checkmark.seal.fill",
+                                        value: "\(calculateProfileCompletion(user))%",
+                                        label: "Completed"
+                                    )
+                                }
+                                .padding(.vertical, 16)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .fill(Color.white.opacity(0.05))
+                                )
+                            }
+                            .padding(.top, 24)
+                            
                             // Preferences Section
                             VStack(alignment: .leading, spacing: 12) {
                                 Text("Preferences")
@@ -340,6 +543,27 @@ struct UserProfileView: View {
                             .padding(.top, 16)
                             
                             Spacer(minLength: 40)
+                            
+                            // Share Profile Button
+                            Button(action: {
+                                shareProfile(user: user)
+                            }) {
+                                HStack {
+                                    Image(systemName: "square.and.arrow.up")
+                                        .font(.system(size: 18))
+                                    
+                                    Text("Share Profile")
+                                        .font(.system(size: 16, weight: .medium))
+                                }
+                                .foregroundColor(.white)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 50)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 25)
+                                        .fill(Color.white.opacity(0.15))
+                                )
+                            }
+                            .padding(.bottom, 24)
                             
                             // Account Management Buttons
                             VStack(spacing: 16) {
@@ -391,6 +615,42 @@ struct UserProfileView: View {
                 .sheet(isPresented: $isEditMode) {
                     EditProfileView(isPresented: $isEditMode, user: user)
                         .environmentObject(authViewModel)
+                }
+                .sheet(isPresented: $showPhotoPickerSheet) {
+                    PhotosPicker(
+                        selection: $selectedItem,
+                        matching: .images,
+                        photoLibrary: .shared()
+                    ) {
+                        Text("Select a photo")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .background(Color.black)
+                    }
+                    .onChange(of: selectedItem) { newItem in
+                        if let newItem = newItem {
+                            Task {
+                                if let data = try? await newItem.loadTransferable(type: Data.self),
+                                   let uiImage = UIImage(data: data) {
+                                    // Add the photo to storage and update user
+                                    await uploadProfilePhoto(uiImage)
+                                }
+                            }
+                        }
+                    }
+                }
+                .actionSheet(isPresented: $showPhotoActionSheet) {
+                    ActionSheet(
+                        title: Text("Add Photos"),
+                        message: Text("Choose a source"),
+                        buttons: [
+                            .default(Text("Choose from Library")) {
+                                showPhotoPickerSheet = true
+                            },
+                            .cancel()
+                        ]
+                    )
                 }
             } else {
                 // Loading or no user state
@@ -548,6 +808,85 @@ struct UserProfileView: View {
             .transition(.opacity)
         }
     }
+    
+    private func uploadProfilePhoto(_ image: UIImage) async {
+        guard let user = authViewModel.currentUser else { return }
+        
+        // Set loading state
+        await MainActor.run {
+            authViewModel.isLoading = true
+        }
+        
+        // Resize and compress image
+        guard let resizedImage = image.resized(to: CGSize(width: 800, height: 800)),
+              let compressedImageData = resizedImage.jpegData(compressionQuality: 0.7) else {
+            await MainActor.run {
+                authViewModel.error = "Failed to process image"
+                authViewModel.isLoading = false
+            }
+            return
+        }
+        
+        // Create unique filename
+        let filename = "profile_\(Date().timeIntervalSince1970).jpg"
+        let storageRef = Storage.storage().reference().child("profiles/\(user.id)/\(filename)")
+        
+        do {
+            // Upload image to Firebase Storage
+            let _ = try await storageRef.putDataAsync(compressedImageData)
+            
+            // Get download URL with retry mechanism
+            var downloadURL: URL?
+            for _ in 1...3 {
+                do {
+                    downloadURL = try await storageRef.downloadURL()
+                    break
+                } catch {
+                    try await Task.sleep(nanoseconds: 1_000_000_000) // 1 second delay
+                }
+            }
+            
+            guard let downloadURL = downloadURL else {
+                throw NSError(domain: "ProfilePhotoUpload", code: 0, userInfo: [NSLocalizedDescriptionKey: "Failed to get download URL"])
+            }
+            
+            // Update user model
+            var updatedPhotos = user.photos
+            updatedPhotos.append(downloadURL.absoluteString)
+            
+            // Update Firestore
+            try await Firestore.firestore().collection("users").document(user.id).updateData([
+                "photos": updatedPhotos
+            ])
+            
+            // Update local user model
+            await MainActor.run {
+                authViewModel.currentUser?.photos = updatedPhotos
+                authViewModel.isLoading = false
+            }
+        } catch {
+            await MainActor.run {
+                authViewModel.error = "Failed to upload photo: \(error.localizedDescription)"
+                authViewModel.isLoading = false
+            }
+        }
+    }
+    
+    private func calculateProfileCompletion(_ user: User) -> Int {
+        var completedFields = 0
+        var totalFields = 6
+        
+        // Check if fields are completed
+        if !user.photos.isEmpty { completedFields += 1 }
+        if !user.bio.isEmpty { completedFields += 1 }
+        if !user.interests.isEmpty { completedFields += 1 }
+        if user.voiceIntroURL != nil { completedFields += 1 }
+        if user.occupation != nil { completedFields += 1 }
+        if user.university != nil { completedFields += 1 }
+        
+        // Calculate percentage
+        return Int((Double(completedFields) / Double(totalFields)) * 100)
+    }
 }
 
 // Photo Gallery Component
@@ -555,6 +894,8 @@ struct PhotoGalleryView: View {
     let photos: [String]
     @Binding var selectedIndex: Int
     @State private var dragOffset: CGFloat = 0
+    @State private var showPhotoPickerSheet = false
+    let onAddPhotoTapped: () -> Void
     
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -572,12 +913,27 @@ struct PhotoGalleryView: View {
                         Text("No photos yet")
                             .font(.system(size: 18))
                             .foregroundColor(.white.opacity(0.5))
+                        
+                        Button(action: {
+                            onAddPhotoTapped()
+                        }) {
+                            Text("Add Photos")
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundColor(.black)
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 10)
+                                .background(
+                                    Capsule()
+                                        .fill(Color.white)
+                                )
+                        }
+                        .padding(.top, 8)
                     }
                 }
             } else {
                 // Photo gallery
                 GeometryReader { geometry in
-                    ZStack(alignment: .bottom) {
+                    ZStack(alignment: .bottomTrailing) {
                         // Photos
                         TabView(selection: $selectedIndex) {
                             ForEach(0..<photos.count, id: \.self) { index in
@@ -607,6 +963,25 @@ struct PhotoGalleryView: View {
                         }
                         .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
                         
+                        // Add photo button (only show if photos < 6)
+                        if photos.count < 6 {
+                            Button(action: {
+                                onAddPhotoTapped()
+                            }) {
+                                ZStack {
+                                    Circle()
+                                        .fill(Color.white)
+                                        .frame(width: 44, height: 44)
+                                        .shadow(color: Color.black.opacity(0.3), radius: 4, x: 0, y: 2)
+                                    
+                                    Image(systemName: "plus")
+                                        .font(.system(size: 20, weight: .medium))
+                                        .foregroundColor(.black)
+                                }
+                            }
+                            .padding(24)
+                        }
+                        
                         // Custom page indicators
                         HStack(spacing: 8) {
                             ForEach(0..<photos.count, id: \.self) { index in
@@ -618,6 +993,7 @@ struct PhotoGalleryView: View {
                             }
                         }
                         .padding(.bottom, 16)
+                        .frame(maxWidth: .infinity, alignment: .center)
                     }
                 }
             }
@@ -1232,5 +1608,41 @@ struct InterestToggleButton: View {
                         )
                 )
         }
+    }
+}
+
+// UIImage resize extension
+extension UIImage {
+    func resized(to size: CGSize) -> UIImage? {
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { (context) in
+            self.draw(in: CGRect(origin: .zero, size: size))
+        }
+    }
+}
+
+// Stat item component
+struct StatItemView: View {
+    let icon: String
+    let value: String
+    let label: String
+    
+    var body: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 14))
+                    .foregroundColor(.white.opacity(0.8))
+                
+                Text(value)
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundColor(.white)
+            }
+            
+            Text(label)
+                .font(.system(size: 12))
+                .foregroundColor(.white.opacity(0.6))
+        }
+        .frame(maxWidth: .infinity)
     }
 } 
