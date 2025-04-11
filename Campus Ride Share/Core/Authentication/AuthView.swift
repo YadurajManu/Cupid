@@ -6,6 +6,8 @@
 //
 
 import SwiftUI
+import FirebaseAuth
+import FirebaseStorage
 
 struct AuthView: View {
     @EnvironmentObject private var viewModel: AuthViewModel
@@ -19,6 +21,8 @@ struct AuthView: View {
     @State private var showForgotPasswordAlert = false
     @State private var resetPasswordEmail = ""
     @State private var showForgotPasswordView = false
+    @State private var showTermsOfService = false
+    @State private var showPrivacyPolicy = false
     
     enum Field: Hashable {
         case email, password, name
@@ -171,6 +175,7 @@ struct AuthView: View {
                     HStack(spacing: 4) {
                         Button("Terms of Service") {
                             // Open terms
+                            showTermsOfService = true
                         }
                         .font(.system(size: 12))
                         .foregroundColor(.white)
@@ -181,6 +186,7 @@ struct AuthView: View {
                         
                         Button("Privacy Policy") {
                             // Open privacy policy
+                            showPrivacyPolicy = true
                         }
                         .font(.system(size: 12))
                         .foregroundColor(.white)
@@ -192,6 +198,12 @@ struct AuthView: View {
             .onTapGesture {
                 focusedField = nil
                 selectedField = nil
+            }
+            .sheet(isPresented: $showTermsOfService) {
+                TermsOfServiceView()
+            }
+            .sheet(isPresented: $showPrivacyPolicy) {
+                PrivacyPolicyView()
             }
         }
         .onAppear {
